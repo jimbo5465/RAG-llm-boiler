@@ -7,6 +7,7 @@ import sys
 import threading
 import hashlib
 import json
+import queue
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 import pythoncom
@@ -19,6 +20,7 @@ import step3_5_attachments as s35
 import google_drive_ocr as g_ocr
 import msg_handler as msg_h
 from project_paths import PROJECT_ROOT
+import outlook_pipeline_bridge as pipeline_bridge
 
 VALID_EXTENSIONS = {
     ".pdf",
@@ -26,6 +28,7 @@ VALID_EXTENSIONS = {
     ".doc",
     ".xlsx",
     ".xls",
+    ".xlsm",
     ".pptx",
     ".rar",
     ".zip",
@@ -33,6 +36,11 @@ VALID_EXTENSIONS = {
     ".jpg",
     ".jpeg",
     ".png",
+    ".bmp",
+    ".tif",
+    ".tiff",
+    ".txt",
+    ".csv",
     ".msg",
 }
 
@@ -57,6 +65,8 @@ def save_item_attachments(item, email_idx, att_dir, valid_extensions, hash_to_fi
                             continue
 
                 clean_att_name = s3.sanitize_filename(orig_fn)
+                clean_stem, clean_ext = os.path.splitext(clean_att_name)
+                clean_att_name = clean_stem[:120] + clean_ext
                 temp_att_fn = f"temp_{email_idx}_{a_idx}_{clean_att_name}"
                 temp_att_path = os.path.join(att_dir, temp_att_fn)
 
@@ -73,10 +83,14 @@ def save_item_attachments(item, email_idx, att_dir, valid_extensions, hash_to_fi
                 else:
                     shamsi_date = s3.safe_extract_shamsi_date(item)
                     date_prefix = shamsi_date.replace("/", "")
-                    uniq_att_fn = f"{date_prefix}_{email_idx:03d}_{a_idx}_{clean_att_name}"
+                    # دو پیام یک زنجیره ممکن است پیوست هم‌نام ولی متفاوت داشته باشند.
+                    uniq_att_fn = f"{date_prefix}_{email_idx:03d}_{a_idx}_{file_hash[:16]}_{clean_att_name[:140]}"
                     final_att_path = os.path.join(att_dir, uniq_att_fn)
-                    if os.path.exists(final_att_path):
-                        os.remove(final_att_path)
+                    collision_idx = 1
+                    while os.path.exists(final_att_path):
+                        uniq_att_fn = f"{date_prefix}_{email_idx:03d}_{a_idx}_{file_hash[:16]}_{collision_idx}_{clean_att_name[:140]}"
+                        final_att_path = os.path.join(att_dir, uniq_att_fn)
+                        collision_idx += 1
                     os.rename(temp_att_path, final_att_path)
 
                     hash_to_filename[file_hash] = uniq_att_fn
@@ -88,6 +102,7 @@ def save_item_attachments(item, email_idx, att_dir, valid_extensions, hash_to_fi
                     except Exception:
                         pass
                 log_func(f"  [!] خطا در پردازش پیوست {getattr(att, 'FileName', '') if 'att' in locals() else ''}: {e}")
+                raise RuntimeError('ذخیرهٔ پیوست کامل نشد؛ ایمیل باید دوباره بررسی شود.') from e
     return saved_attachments
 
 
@@ -101,8 +116,10 @@ class OutlookExtractorGUI:
         self.namespace = None
         self.root_archives = None
         self.node_map = {}  # mapping tree node -> folder COM object
+        self.ui_events = queue.Queue()
 
         self.setup_ui()
+        self.root.after(100, self.drain_ui_events)
         self.init_outlook()
 
     def setup_ui(self):
@@ -167,10 +184,26 @@ class OutlookExtractorGUI:
         self.txt_log.pack(fill=tk.BOTH, expand=True)
 
     def log(self, text):
-        self.txt_log.config(state=tk.NORMAL)
-        self.txt_log.insert(tk.END, text + "\n")
-        self.txt_log.see(tk.END)
-        self.txt_log.config(state=tk.DISABLED)
+        self.ui_events.put(('log', str(text)))
+
+    def drain_ui_events(self):
+        try:
+            while True:
+                kind, text = self.ui_events.get_nowait()
+                if kind == 'log':
+                    self.txt_log.config(state=tk.NORMAL)
+                    self.txt_log.insert(tk.END, text + '\n')
+                    self.txt_log.see(tk.END)
+                    self.txt_log.config(state=tk.DISABLED)
+                elif kind == 'done':
+                    messagebox.showinfo('اتمام عملیات', text)
+                elif kind == 'error':
+                    messagebox.showerror('پردازش کامل نشد', text)
+                elif kind == 'enable':
+                    self.btn_run.config(state=tk.NORMAL)
+        except queue.Empty:
+            pass
+        self.root.after(100, self.drain_ui_events)
 
     def init_outlook(self):
         try:
@@ -253,6 +286,8 @@ class OutlookExtractorGUI:
     def run_pipeline(self, entry_id, store_id, folder_name, folder_path_str, max_limit, use_ocr, use_rollup=True):
         pythoncom.CoInitialize()
         try:
+            if use_ocr:
+                pipeline_bridge.preflight_google(self.log)
             outlook = win32com.client.Dispatch("Outlook.Application")
             namespace = outlook.GetNamespace("MAPI")
             target_folder = namespace.GetFolderFromID(entry_id, store_id)
@@ -270,6 +305,7 @@ class OutlookExtractorGUI:
             items.Sort("[ReceivedTime]", False)
 
             processed_count = 0
+            failed_count = 0
             saved_att_total = 0
 
             # نام ایمن برای پوشه خروجی اختصاصی
@@ -279,7 +315,8 @@ class OutlookExtractorGUI:
             # ساختار پوشه‌بندی اختصاصی در مسیر ثابت:
             # <PROJECT_ROOT>\Extracted_Data\<FolderName>\
             safe_folder_name_clean, _ = os.path.splitext(safe_folder_name)
-            base_folder_out = os.path.join(project_dir, "Extracted_Data", safe_folder_name_clean)
+            base_folder_out = str(pipeline_bridge.allocate_output(safe_folder_name_clean))
+            self.log(f'[+] مسیر خروجی این اجرا: {base_folder_out}')
             output_dir = os.path.join(base_folder_out, "emails")
             att_dir = os.path.join(output_dir, "attachments")
             att_text_dir = os.path.join(base_folder_out, "attachments_text")
@@ -450,6 +487,7 @@ class OutlookExtractorGUI:
 موضوع: {conv_subj}
 تعداد کل پیام‌ها: {total_msgs}
 بازه زمانی شمسی: {date_range_str}
+تاریخ شمسی: {last_shamsi}
 مشارکت‌کنندگان: {part_str}
 مسیر پوشه: {folder_path_str}
 تعداد کل پیوست‌های ذخیره شده: {len(conv_saved_atts)}
@@ -469,6 +507,7 @@ class OutlookExtractorGUI:
                         saved_att_total += len(conv_saved_atts)
                         self.log(f"[{conv_idx}/{len(conv_groups)}] ذخیره شد ({len(c_items)} ایمیل): {conv_subj[:40]}")
                     except Exception as e:
+                        failed_count += len(c_items)
                         self.log(f"[-] خطا در زنجیره {conv_idx}: {e}")
 
             else:
@@ -530,8 +569,8 @@ class OutlookExtractorGUI:
                         processed_count += 1
                         self.log(f"[{processed_count}/{items_to_process}] استخراج شد: {safe_subj[:35]}")
                     except Exception as e:
+                        failed_count += 1
                         self.log(f"[-] خطا در پیام {idx}: {e}")
-                    self.log(f"[-] خطا در پیام {idx}: {e}")
 
             # ذخیره مانیفست پیوست‌ها
             manifest_json_path = os.path.join(base_folder_out, "attachment_manifest.json")
@@ -555,48 +594,35 @@ class OutlookExtractorGUI:
                     with open(manifest_json_path, "w", encoding="utf-8") as mf:
                         json.dump(attachment_manifest, mf, ensure_ascii=False, indent=2)
             except Exception as e:
+                failed_count += 1
                 self.log(f"[-] خطا در پردازش فایل‌های MSG: {e}")
 
-            self.log("[+] در حال تبدیل پیوست‌های آفیس به Markdown (Step 3.5)...")
-            try:
-                stats = s35.process_attachments(
-                    att_dir=att_dir,
-                    md_dir=output_dir,
-                    out_dir=att_text_dir,
-                    attachment_manifest=attachment_manifest,
-                )
-                self.log(f"[+] تبدیل پیوست‌های آفلاین پایان یافت ({stats['md']} فایل).")
-            except Exception as e:
-                self.log(f"[-] خطا در پردازش پیوست‌های آفلاین: {e}")
-
-            # تبدیل PDFها و تصاویر اسکن‌شده با Google OCR در صورت فعال بودن تیک
-            if use_ocr:
-                self.log("\n[+] در حال اجرای Google OCR برای کلیه PDFها و اسناد پیوست...")
-                ocr_out_dir = os.path.join(base_folder_out, "attachments_ocr_google")
-                try:
-                    g_ocr.batch_convert_all(
-                        att_dir,
-                        ocr_out_dir,
-                        force_overwrite=False,
-                        log_func=self.log,
-                        attachment_manifest=attachment_manifest,
-                    )
-                    self.log("[+] عملیات Google OCR با موفقیت تمام شد!")
-                except Exception as e:
-                    import traceback
-                    err_details = traceback.format_exc()
-                    self.log(f"[-] خطا در Google OCR: {e}\n{err_details}")
-            else:
-                self.log("\n[i] تبدیل Google OCR بر اساس تنظیمات غیرفعال بود (نادیده گرفته شد).")
-
-            self.log(f"\n[+] پایان کل عملیات! مسیر خروجی:\n{base_folder_out}")
-            messagebox.showinfo("اتمام عملیات", f"استخراج و تبدیل پوشه با موفقیت در مسیر زیر انجام شد:\n{base_folder_out}")
+            summary = pipeline_bridge.finish_dataset(
+                base_folder_out, attachment_manifest, processed_count,
+                failed_count, use_ocr, self.log)
+            self.log(f"[+] پایان عملیات؛ وضعیت گزارش: {summary['quality_control']['status']}")
+            self.ui_events.put(('done', f"خروجی: {base_folder_out}\nNotebookLM: {summary['notebooklm']}\nوضعیت کنترل کیفیت: {summary['quality_control']['status']}"))
+        except Exception as error:
+            self.log(f'[-] عملیات کامل نشد: {error}')
+            self.ui_events.put(('error', str(error)))
         finally:
-            self.btn_run.config(state=tk.NORMAL)
+            self.ui_events.put(('enable', ''))
             pythoncom.CoUninitialize()
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == '--self-test':
+        # آزمون بارگذاری نسخهٔ بسته‌بندی‌شده، بدون Outlook یا درخواست Google.
+        from pathlib import Path
+        report_path = Path(sys.argv[2]).resolve()
+        if not report_path.is_relative_to(Path(PROJECT_ROOT).resolve()):
+            raise ValueError('گزارش آزمایش باید داخل مسیر پروژه باشد.')
+        report_path.write_text(json.dumps({
+            'status': 'ok', 'project_root': str(PROJECT_ROOT),
+            'backend_loaded': True, 'outlook_not_started': True,
+            'google_not_called': True,
+        }, ensure_ascii=False, indent=2), encoding='utf-8')
+        sys.exit(0)
     root = tk.Tk()
     app = OutlookExtractorGUI(root)
     root.mainloop()
