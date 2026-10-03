@@ -206,7 +206,9 @@ class SpeedTest(unittest.TestCase):
                 self.assertTrue(engine.stats['degraded_to_serial'])
                 self.assertEqual(engine.cache.db.execute('SELECT COUNT(*) FROM pages').fetchone()[0], 1)
                 text = (root / 'out' / 'source.md').read_text(encoding='utf-8')
-                self.assertIn('## صفحه 2\n\nThis is a valid recovered LAST_PAGE', text)
+                section = text.split('## صفحه 2', 1)[1]
+                self.assertIn('This is a valid recovered LAST_PAGE', section)
+                self.assertIn(quality.OCR_SOURCE_WARNING, section)
                 report = json.loads((root / 'out' / 'ocr_quality_report.json').read_text(encoding='utf-8'))['source.md']
                 self.assertEqual(report['failed_pages'], [1])
                 self.assertEqual(report['requests'], 3)

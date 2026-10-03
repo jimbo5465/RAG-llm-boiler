@@ -202,6 +202,14 @@ def prepare_pdf(source, output, rotation_overrides=None, force_raster=False, log
     return info
 
 
+OCR_SOURCE_WARNING = (
+    '> هشدار اعتبار متن: این متن با OCR از تصویر صفحه استخراج شده است. '
+    'کلمات، اعداد و مفهوم ممکن است نادرست منتقل شده باشند؛ خطا در نوشته‌های '
+    'دست‌نویس فارسی می‌تواند بسیار شدید باشد. برای نتیجه‌گیری حساس به اصل '
+    'پیوست مراجعه کنید. نوع نوشتار و درصد دقت تأیید نشده است.'
+)
+
+
 def evaluate_text(text):
     clean = text_only(text)
     tokens = re.findall(r"\S+", clean)

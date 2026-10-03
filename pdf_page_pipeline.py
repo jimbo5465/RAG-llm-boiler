@@ -230,8 +230,14 @@ def convert_pdf(source_path, output_path, *, service, service_factory, ocr_media
     failures = [entry['number'] for entry in report['pages'] if entry['status'] == 'FAIL']
     if failures:
         notices.append(f"> خروجی ناقص است؛ متن صفحات {'، '.join(map(str, failures))} تأیید نشده است.")
-    sections = [f"## صفحه {number}\n\n{texts.get(number, '> متن این صفحه تأیید نشده است؛ به اصل پیوست مراجعه کنید.')}"
-                for number in range(1, count + 1)]
+    sections = []
+    for number in range(1, count + 1):
+        text = texts.get(number, '> متن این صفحه تأیید نشده است؛ به اصل پیوست مراجعه کنید.')
+        # منشأ OCR روی دیسک ثبت می‌شود؛ شامل پاسخ زنده، حافظه و صفحهٔ تکراری.
+        # به متن QC/حافظه تزریق نمی‌شود و برای استخراج محلی اضافه نمی‌شود.
+        if number in texts and number in report['google_pages']:
+            text = quality.OCR_SOURCE_WARNING + '\n\n' + text
+        sections.append(f'## صفحه {number}\n\n{text}')
     output_path.write_text('\n'.join(header) + '\n\n' + '\n\n'.join(notices + sections), encoding='utf-8')
     log_func(f"    ذخیره شد: {len(report['local_pages'])} صفحه محلی، {len(report['google_pages'])} صفحه مسیر گوگل، {report['requests']} درخواست")
     return True

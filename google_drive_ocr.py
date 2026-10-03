@@ -504,10 +504,16 @@ def _convert_file_to_md_gdrive(file_path, output_md_path, service=None, parent_e
 
     elif ext in (".jpg", ".jpeg"):
         media = MediaFileUpload(file_path, mimetype="image/jpeg", resumable=True)
-        raw_text = ocr_single_media_gdrive(media, file_name, "image/jpeg", service)
+        try:
+            raw_text = ocr_single_media_gdrive(media, file_name, "image/jpeg", service)
+        finally:
+            media.stream().close()
     elif ext == ".png":
         media = MediaFileUpload(file_path, mimetype="image/png", resumable=True)
-        raw_text = ocr_single_media_gdrive(media, file_name, "image/png", service)
+        try:
+            raw_text = ocr_single_media_gdrive(media, file_name, "image/png", service)
+        finally:
+            media.stream().close()
     elif ext == ".doc":
         media = MediaFileUpload(file_path, mimetype="application/msword", resumable=True)
         raw_text = ocr_single_media_gdrive(media, file_name, "application/msword", service)
@@ -568,6 +574,9 @@ def _convert_file_to_md_gdrive(file_path, output_md_path, service=None, parent_e
     if quality_report and quality_report['status'] == 'FAIL':
         failed_pages = '، '.join(str(p['number']) for p in quality_report['pages'] if p['status'] == 'FAIL')
         warning += f"> خروجی ناقص است؛ متن صفحات {failed_pages} تأیید نشده است.\n\n"
+    if ext in IMAGE_EXTENSIONS:
+        # فقط پس از کنترل متن اصلی؛ هشدار نباید فیلتر نویز را دور بزند.
+        warning += pdf_quality.OCR_SOURCE_WARNING + '\n\n'
     final_content = "\n".join(fm_lines) + "\n\n" + warning + processed_text.strip()
 
     out_parent_dir = os.path.dirname(output_md_path)

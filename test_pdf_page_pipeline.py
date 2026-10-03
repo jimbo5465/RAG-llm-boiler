@@ -48,6 +48,8 @@ class HybridTest(unittest.TestCase):
             self.assertLess(text.index('original page 1'), text.index('SECOND_PAGE'))
             self.assertLess(text.index('SECOND_PAGE'), text.index('original page 3'))
             self.assertNotIn('RAGPAGE', text)
+            self.assertEqual(text.count(quality.OCR_SOURCE_WARNING), 1)
+            self.assertIn(quality.OCR_SOURCE_WARNING, text.split('## صفحه 2')[1].split('## صفحه 3')[0])
             self.assertEqual(before, source.read_bytes())
             report = json.loads((root / 'ocr_quality_report.json').read_text(encoding='utf-8'))['out.md']
             self.assertEqual(report['local_pages'], [1, 3])
@@ -64,6 +66,41 @@ class HybridTest(unittest.TestCase):
                 doc.save(source)
             with patch.object(ocr, 'get_drive_service', side_effect=AssertionError('No Google authentication allowed')), patch.object(ocr, 'ocr_single_media_gdrive', side_effect=AssertionError('No upload allowed')):
                 self.assertTrue(ocr.convert_file_to_md_gdrive(str(source), str(output)))
+            self.assertNotIn(quality.OCR_SOURCE_WARNING, output.read_text(encoding='utf-8'))
+
+    def test_cached_ocr_warning_is_saved_and_survives_bundling(self):
+        import bundle_notebooklm as bundle
+        class CacheEngine:
+            def lookup(self, path, number):
+                return {'method': 'cache', 'text': 'Readable recovered document text with numbers 3700 and 45.67.',
+                        'requests': 0}
+        with tempfile.TemporaryDirectory() as directory:
+            source, output = Path(directory) / 'source.pdf', Path(directory) / 'out.md'
+            with pymupdf.open() as doc:
+                doc.new_page()
+                doc.save(source)
+            with patch.object(ocr, 'get_drive_service', side_effect=AssertionError('No auth')):
+                ocr.convert_file_to_md_gdrive(str(source), str(output), speed_engine=CacheEngine())
+            text = output.read_text(encoding='utf-8')
+            self.assertEqual(text.count(quality.OCR_SOURCE_WARNING), 1)
+            _, body = bundle.split_header(text)
+            merged = bundle.attachment_body({'body': body})
+            self.assertEqual(merged.count(quality.OCR_SOURCE_WARNING), 1)
+            self.assertIn('3700 and 45.67', merged)
+
+    def test_standalone_image_warning_after_ocr_not_noise_filter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for ext in ['jpg', 'png']:
+                with self.subTest(ext=ext):
+                    source, output = Path(directory) / f'letter.{ext}', Path(directory) / f'{ext}.md'
+                    Image.new('RGB', (40, 40), 'white').save(source)
+                    with patch.object(ocr, 'ocr_single_media_gdrive', return_value='This is recovered scanned text with numbers 3700. ' * 12):
+                        self.assertTrue(ocr.convert_file_to_md_gdrive(str(source), str(output), service=object()))
+                    self.assertEqual(output.read_text(encoding='utf-8').count(quality.OCR_SOURCE_WARNING), 1)
+                    empty_output = Path(directory) / f'empty_{ext}.md'
+                    with patch.object(ocr, 'ocr_single_media_gdrive', return_value='tiny'):
+                        self.assertFalse(ocr.convert_file_to_md_gdrive(str(source), str(empty_output), service=object()))
+                    self.assertFalse(empty_output.exists())
 
     def test_persian_reversed_and_image_routed_to_ocr(self):
         class FakePage:
