@@ -1,5 +1,16 @@
+# Auth / Secrets
+credentials.json
+token.json
+token_*.json
+client_secret*.json
+
 # خروجی‌ها — فقط کد در گیت، داده‌ها لوکال
+Extracted_Data/
 Extracted_Sample/
+Extracted_Sample_text/
+chroma_db/
+test_inputs/
+test_pdf_pages/
 
 # Python
 __pycache__/
@@ -16,3 +27,6 @@ Thumbs.db
 # Temp
 *.log
 .opencode/
+build/
+dist/
+tmp/

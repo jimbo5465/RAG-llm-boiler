@@ -29,7 +29,8 @@
 | ۱ | استفاده مستقیم از ابزار موجود (ChatGPT/Claude روی TXT) — **Baseline** | ✅ اثبات‌شده |
 | ۲ | ابزار آماده رایگان (NotebookLM و ...) | بررسی شده |
 | ۳ | **اتوماسیون استخراج → متن → پاک‌سازی → دسته‌بندی** | ✅ **همین ریپو** |
-| ۴ | RAG ساده (Chunking + Embedding چندزبانه + ChromaDB) | 🔜 قدم بعدی |
+| ۳.۵ | **تبدیل پیوست‌ها به Markdown (اکسل، ورد، PDF و...)** | ✅ **همین ریپو** |
+| ۴ | **RAG ساده (Chunking + Embedding چندزبانه + ChromaDB)** | ✅ **پیاده‌سازی شد (`step4_rag.py`)** |
 | ۵ | استخراج ساختاریافته `Problem→Cause→Action→Result→Lesson` | آینده |
 | ۶ | GraphRAG / Agent / Fine-tuning | فقط در صورت نیاز اثبات‌شده |
 
@@ -39,7 +40,7 @@
 
 ---
 
-## ۳. پایپ‌لاین فعلی — `step3_discovery.py`
+## ۳. مسیر قدیمی Outlook — `step3_discovery.py`
 
 استخراج خودکار از Outlook → پاک‌سازی هوشمند → خروجی Markdown با متادیتا.
 
@@ -123,20 +124,62 @@ Extracted_Sample/
 
 ### پیش‌نیاز
 
-- Windows + Outlook کلاسیک (MAPI) — پوشه `Archives/Inbox/نصب نیرو/بویلر واحد ۳/دریافتی`
-- Python 3.10+ و `pywin32` (`pip install pywin32`)
+- Python 3.10+
+- برای مسیر آفلاین، نصب Outlook لازم نیست.
+- پکیج‌های اصلی:
+  ```bat
+  py -3 -m pip install extract-msg openpyxl xlrd pdfminer.six python-docx python-pptx pymupdf
+  ```
 
-### دستور
+### دستورها
+
+**۱. اجرای آفلاین روی فایل‌های MSG بدون Outlook:**
+
+فایل‌های `.msg` را در `test_inputs\msg` قرار دهید و اجرا کنید:
+
+```bat
+Run_Outlook_Extractor.bat
+```
+
+یا مستقیماً از خط فرمان:
 
 ```bat
 set PYTHONIOENCODING=utf-8
-python step3_discovery.py
+py -3 offline_msg_pipeline.py --input "test_inputs\msg" --dataset offline_msg --ocr
 ```
 
-خروجی در کنار پروژه: `Extracted_Sample/` (مسیر از `__file__` ساخته می‌شود، نه Desktop).
+Google OCR در اجرای عادی و فایل BAT به‌طور پیش‌فرض فعال است. فقط برای عیب‌یابی محلی و اجرای بدون شبکه می‌توان گزینه `--no-ocr` را استفاده کرد.
 
-- `MAX_LIMIT = 150` — برای کل پوشه کافی است (۱۰۰ پیام)
-- پیوست‌ها فقط با پسوند مجاز و فیلتر امضا (`image/signature/logo` زیر ۴۰KB حذف)
+در سیاست فعلی، PDF صفحه‌به‌صفحه به‌صورت محلی استخراج و کنترل سلامت می‌شود؛ فقط صفحات مشکوک به Google Drive OCR فرستاده می‌شوند. معیار قدیمی ۸۰ کاراکتر به‌تنهایی معیار پذیرش نیست. برای PDF با **بیش از ۱۵ صفحه یا حجم بیش از ۱۰ مگابایت** فقط پنج صفحهٔ اول پردازش می‌شود؛ پردازش ناقص در Markdown مشخص است. رندر OCR با کیفیت ۳۰۰ DPI انجام می‌شود. جزئیات در [روال PDF](PDF_OCR_WORKFLOW_FA.md) آمده است.
+
+برای تست تبدیل بدون ساخت Embedding، مثلاً روی مجموعهٔ ۱۰۷ ایمیلی جدید:
+
+```bat
+set PYTHONIOENCODING=utf-8
+py -3 -u run_msg_test.py final --expected-count 107
+```
+
+پوشهٔ ورودی `test_inputs\msg\final` است. پوشهٔ خروجی باید از قبل وجود نداشته باشد؛ این دستور خروجی قبلی را حذف نمی‌کند. تنظیمات آزمایشی شامل دو مسیر شبکه، بسته‌های حداکثر پنج‌صفحه‌ای، حافظهٔ صفحات تکراری و بازگشت امن به ارسال مستقل در صورت نامعتبر بودن مرزهاست.
+
+`app_gui.py` و `app_msg_export.py` و فایل‌های ساخت آن‌ها به‌عنوان مسیرهای قدیمی حفظ شده‌اند؛ اجرای آفلاین به هیچ‌یک از فایل‌های EXE در `dist` وابسته نیست. `dist` و `build` محصولات ساخت هستند، نه سورس، و در گیت ثبت نمی‌شوند. فایل OAuth و توکن کاربر نیز باید محلی تهیه شوند و در بستهٔ اجرایی قرار نمی‌گیرند.
+
+خروجی مسیر آفلاین در `Extracted_Data\offline_msg` ساخته می‌شود و شامل ایمیل‌های Markdown، پیوست‌های خام، متن پیوست‌ها، مانیفست ارتباط و گزارش خلاصه است.
+
+**۲. وابستگی مرحله Embedding و ChromaDB:**
+
+```bat
+py -3 -m pip install chromadb sentence-transformers
+```
+
+اجرای BAT به‌صورت خودکار کنترل کیفیت، چانک‌بندی، Embedding و بازسازی ایندکس همان مجموعه را انجام می‌دهد. اگر وابستگی‌های بالا نصب نباشند، `rag_chunks.jsonl` ساخته می‌شود ولی ChromaDB با وضعیت خطا گزارش می‌شود.
+
+**۳. جستجوی هوشمند روی خروجی آفلاین:**
+```bat
+set PYTHONIOENCODING=utf-8
+py -3 step4_rag.py --dataset-dir "Extracted_Data\offline_msg" --query "متن سؤال"
+```
+
+مسیر قدیمی `step3_discovery.py` همچنان برای سیستمی که Outlook کلاسیک دارد نگهداری شده است، اما مسیر اصلی توسعه فعلی نیست.
 
 > **نکته CMD:** خروجی فارسی فقط از طریق Python خوانده شود؛ `dir` کدپیج فارسی ندارد.
 
@@ -146,15 +189,16 @@ python step3_discovery.py
 
 - هزینه صفر، بدون API پولی / VPS / GPU
 - بدون سخت‌افزار جدید
-- تحلیل تصویر (OCR/Vision) خارج از فاز اول
+- OCR پیوست‌های منتخب با Google Drive در مسیر فعلی فعال است؛ سرویس ابری پولی استفاده نمی‌شود.
 - بدون Knowledge Graph / Agent / Fine-tuning تا نیاز اثبات نشود
 
 ---
 
 ## ۷. نقشه راه
 
-- [x] **Step 3 — Extraction & Cleaning** (همین ریپو، ۱۰۰ سند تأییدشده)
-- [ ] **Step 4 — RAG ساده** `step4_rag.py`: چانک = یک پیام از thread (با هدرش)، مدل چندزبانه CPU (`BAAI/bge-m3` یا `paraphrase-multilingual`), ChromaDB لوکال، پرسش با استناد
+- [x] **Step 3 — Extraction & Cleaning** (استخراج ۱۰۰ سند ایمیل با متادیتا و پالایش ۱۸ سناریو)
+- [x] **Step 3.5 — Attachments to Markdown** (تبدیل انواع پیوست‌های اکسل، PDF، ورد به متن ساخت‌یافته)
+- [x] **Step 4 — RAG ساده** `step4_rag.py`: چانک = یک پیام از thread (با هدرش) + متون پیوست‌ها، مدل چندزبانه CPU (`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`), ChromaDB لوکال، پرسش با استناد کامل
 - [ ] ارزیابی RAG vs Baseline TXT روی ۵ سؤال سند (§۹)
 - [ ] استخراج `Problem→Action→Result→Lesson` با ردیابی منبع
 
@@ -164,11 +208,24 @@ python step3_discovery.py
 
 ```
 .
-├── step3_discovery.py          # پایپ‌لاین استخراج و پاک‌سازی
-├── Extracted_Sample/           # خروجی (۱۰۰ md — attachments در .gitignore)
-│   └── *.md
-├── سند تعریف مسئله.docx        # سند مبنا
-├── AGENTS.md                   # قوانین اجرا (فقط CMD، خروجی فارسی via Python)
+├── step3_discovery.py              # پایپ‌لاین استخراج ایمیل و پاک‌سازی
+├── offline_msg_pipeline.py         # ورودی آفلاین MSG بدون Outlook
+├── step3_5_attachments.py          # تبدیل پیوست‌های متنی به Markdown
+├── step4_rag.py                    # موتور بازیابی معنایی و RAG با قابلیت استناد
+├── test_inputs/msg/                # ورودی محلی فایل‌های MSG (در .gitignore)
+├── Extracted_Data/offline_msg/     # خروجی خط لوله آفلاین (در .gitignore)
+│   ├── quality_report.json         # کنترل کیفیت و پوشش تبدیل‌ها
+│   ├── rag_chunks.jsonl            # چانک‌های آماده Embedding
+│   └── chroma_db/                  # ایندکس برداری همین مجموعه
+├── Extracted_Sample/               # خروجی ایمیل‌ها (۱۰۰ md — در .gitignore)
+│   ├── *.md
+│   └── attachments/                # فایل‌های خام پیوست
+├── Extracted_Sample_text/          # خروجی پردازش پیوست‌ها (در .gitignore)
+│   ├── attachments_report.txt      # گزارش تبدیل و خطاها
+│   └── attachments_text/*.md       # متن استخراج‌شده پیوست‌ها
+├── chroma_db/                      # پایگاه داده برداری لوکال (در .gitignore)
+├── سند تعریف مسئله.docx            # سند مبنا
+├── AGENTS.md                       # قوانین محیط و دستورات اجرایی
 └── README.md
 ```
 
@@ -176,5 +233,6 @@ python step3_discovery.py
 
 ## ۹. مشارکت و بازخورد
 
-گزارش باگ / پیشنهاد: https://github.com/anomalyco/opencode — ذکر کنید از `muse-spark-1.2` استفاده می‌کنید.
+گزارش باگ / پیشنهاد در مخزن همین پروژه: https://github.com/jimbo5465/RAG-llm-boiler
 
+جمع‌بندی پذیرش این نسخه در [ارزیابی نسخه](RELEASE_EVALUATION_FA.md) ثبت شده است.

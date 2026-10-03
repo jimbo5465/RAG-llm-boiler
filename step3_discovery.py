@@ -1,4 +1,5 @@
 import os
+import os
 import re
 import unicodedata
 import win32com.client
@@ -41,6 +42,40 @@ def gregorian_to_jalali(gy, gm, gd):
     return f"{jy:04d}/{jm:02d}/{jd:02d}"
 
 
+def safe_extract_shamsi_date(item):
+    """
+    استخراج کاملاً محافظت‌شده تاریخ از آیتم Outlook بدون تریگر شدن باگ‌های timezone / pywintypes
+    """
+    try:
+        if item is None:
+            return "1402/01/01"
+            
+        # تلاش برای دریافت زمان
+        try:
+            rx_time = getattr(item, "ReceivedTime", None)
+        except Exception:
+            rx_time = None
+
+        if rx_time is not None:
+            if hasattr(rx_time, "year") and hasattr(rx_time, "month") and hasattr(rx_time, "day"):
+                y, m, d = int(rx_time.year), int(rx_time.month), int(rx_time.day)
+                if y < 1600:
+                    return f"{y:04d}/{m:02d}/{d:02d}"
+                return gregorian_to_jalali(y, m, d)
+            
+            s = str(rx_time)
+            m_match = re.search(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", s)
+            if m_match:
+                y, m, d = int(m_match.group(1)), int(m_match.group(2)), int(m_match.group(3))
+                if y < 1600:
+                    return f"{y:04d}/{m:02d}/{d:02d}"
+                return gregorian_to_jalali(y, m, d)
+    except Exception:
+        pass
+        
+    return "1402/01/01"
+
+
 # -------------------------------------------------------------
 # ۲. توابع پالایش پیشرفته و تفکیک تاریخچه
 # -------------------------------------------------------------
@@ -59,7 +94,10 @@ def sanitize_filename(filename):
     if not filename:
         return "No_Subject"
     clean_name = re.sub(r'[\\/*?:"<>|]', "_", filename)
-    return clean_name.strip()[:60]
+    name, ext = os.path.splitext(clean_name.strip())
+    if len(name) > 60:
+        name = name[:60].rstrip()
+    return f"{name}{ext}" if ext else name
 
 
 # نویز قوی — روی هر خط انتهایی اعمال می‌شود (حتی خطوط بلند)، قبل از چک طول
@@ -500,6 +538,112 @@ def convert_sent_line_to_jalali(stripped_line):
 
 
 # -------------------------------------------------------------
+# ۳.۱ توابع پشتیبانی از تجمیع زنجیره مکاتبات (Conversation Rollup)
+# -------------------------------------------------------------
+SUBJECT_PREFIX_REGEX = re.compile(
+    r"^(?:(?:re|fw|fwd|پاسخ|بازفرست)\s*[:：]\s*|\s*\[warning[^\]]*\]\s*)+",
+    re.IGNORECASE,
+)
+
+
+def clean_subject_for_thread(subject):
+    """پاک‌سازی تمام پیشوندهای RE, FW, پاسخ و هشدارهای امنیتی از موضوع ایمیل"""
+    if not subject:
+        return "بدون موضوع"
+    s = COMPILED_SUBJECT_WARNING_REGEX.sub("", subject).strip()
+    while True:
+        m = SUBJECT_PREFIX_REGEX.match(s)
+        if m:
+            s = s[m.end():].strip()
+        else:
+            break
+    return s if s else "بدون موضوع"
+
+
+HEADER_SPLIT_REGEX = re.compile(
+    r"(?m)^(?:\s*[-_]{2,}\s*)?(?:>\s*)?(?:From:|از:)", re.IGNORECASE
+)
+
+
+def extract_latest_message_body(full_body):
+    """استخراج فقط متن جدیدترین پیام بدون تاریخچه نقل‌قول‌ها"""
+    if not full_body:
+        return ""
+    # حذف برچسب‌های مارک‌داون موجود در صورت تست روی فایل‌های از پیش ذخیره‌شده
+    clean_in = re.sub(r"^###\s*📩[^\n]*\n+", "", full_body).strip()
+    matches = list(HEADER_SPLIT_REGEX.finditer(clean_in))
+    if not matches:
+        cleaned = clean_single_message_body(clean_in)
+        return cleaned if cleaned else PLACEHOLDER_EMPTY_BODY
+    first_msg = clean_in[: matches[0].start()].strip()
+    first_msg = re.sub(r"(?:###\s*📜[^\n]*|\-{3,}|_{3,})\s*$", "", first_msg).strip()
+    cleaned_first = clean_single_message_body(first_msg)
+    return cleaned_first if cleaned_first else PLACEHOLDER_EMPTY_BODY
+
+
+def extract_quotes_chronological(full_body):
+    """استخراج پیام‌های تاریخچه نقل‌قول‌شده و بازگرداندن آن‌ها به ترتیب زمانی (قدیم به جدید)"""
+    if not full_body:
+        return []
+    clean_in = re.sub(r"^###\s*📩[^\n]*\n+", "", full_body).strip()
+    matches = list(HEADER_SPLIT_REGEX.finditer(clean_in))
+    if not matches:
+        return []
+
+    sections = []
+    for i in range(len(matches)):
+        start_idx = matches[i].start()
+        end_idx = matches[i + 1].start() if i + 1 < len(matches) else len(clean_in)
+        raw_section = clean_in[start_idx:end_idx].strip()
+
+        header_lines = []
+        body_lines = []
+        in_header = True
+
+        for line in raw_section.splitlines():
+            s_line = line.strip()
+            # حذف علامت نقل‌قول > و تیتر مارک‌داون
+            if s_line.startswith("###"):
+                continue
+            if s_line.startswith(">"):
+                s_line = s_line.lstrip(">").strip()
+
+            if in_header and (
+                s_line.lower().startswith(
+                    (
+                        "from:", "از:", "sent:", "ارسال:", "فرستاده شده:",
+                        "to:", "به:", "cc:", "رونوشت:", "subject:", "موضوع:",
+                    )
+                ) or s_line == ""
+            ):
+                if s_line:
+                    if s_line.lower().startswith(("cc:", "رونوشت:")):
+                        continue
+                    h = COMPILED_MAILTO_REGEX.sub("", s_line)
+                    h = COMPILED_EMAIL_BRACKET_REGEX.sub("", h)
+                    h = COMPILED_URL_BRACKET_REGEX.sub("", h)
+                    h = re.sub(r"<\s*>", "", h)
+                    h = re.sub(r"\[\s*\]", "", h)
+                    h = re.sub(r"\s{2,}", " ", h).strip()
+                    h = convert_sent_line_to_jalali(h)
+                    if re.match(r"(?i)^(subject|موضوع)\s*:", h):
+                        h = COMPILED_SUBJECT_WARNING_REGEX.sub("", h)
+                    if h:
+                        header_lines.append(h)
+            else:
+                in_header = False
+                body_lines.append(s_line)
+
+        cleaned_body = clean_single_message_body("\n".join(body_lines))
+        sections.append({
+            "headers": header_lines,
+            "body": cleaned_body or PLACEHOLDER_EMPTY_BODY,
+        })
+
+    return list(reversed(sections))
+
+
+# -------------------------------------------------------------
 # ۴. تابع هدایت به پوشه هدف
 # -------------------------------------------------------------
 def get_folder_by_path(root_folder, path_list):
@@ -602,10 +746,7 @@ def run_pipeline():
             to_recipients = item.To if item.To else "ندارد"
             cc_recipients = item.CC if item.CC else "ندارد"
 
-            rx_time = item.ReceivedTime
-            shamsi_date = gregorian_to_jalali(
-                rx_time.year, rx_time.month, rx_time.day
-            )
+            shamsi_date = safe_extract_shamsi_date(item)
             date_prefix = shamsi_date.replace("/", "")
 
             saved_attachments_for_email = []

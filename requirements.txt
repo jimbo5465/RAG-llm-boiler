@@ -1,0 +1,13 @@
+extract-msg
+beautifulsoup4
+openpyxl
+xlrd
+pdfminer.six
+python-docx
+python-pptx
+pymupdf
+Pillow
+google-api-python-client
+google-auth-oauthlib
+# Optional Windows Outlook support; the offline MSG path does not require Outlook.
+pywin32; sys_platform == 'win32'
