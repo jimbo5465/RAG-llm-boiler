@@ -2,6 +2,9 @@
 credentials.json
 token.json
 token_*.json
+knowledge_collector_settings.json
+msg_extractor_settings.json
+/درس اموخته و ثبت پیشنهادات فنی/
 client_secret*.json
 
 # خروجی‌ها — فقط کد در گیت، داده‌ها لوکال

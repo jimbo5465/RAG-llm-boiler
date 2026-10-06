@@ -1,4 +1,5 @@
 extract-msg
+rarfile>=4.2
 beautifulsoup4
 openpyxl
 xlrd

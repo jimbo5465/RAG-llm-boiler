@@ -12,22 +12,38 @@
 - **هدف:** تبدیل مکاتبات ایمیلی و پیوست‌ها به آرشیو متنی تمیز و آماده RAG لوکال با هزینه صفر.
 - **زبان مستندات و خروجی‌ها:** فارسی.
 
-## 3. ساختار داده‌ها و پوشه‌ها
+## 3. ساختار فعلی پروژه و داده‌ها
 
-- `Extracted_Sample/`: خروجی ایمیل‌های Markdown پالایش‌شده + پوشه `attachments/` فایل‌های خام.
-- `Extracted_Sample_text/attachments_text/`: متن Markdown استخراج‌شده از پیوست‌ها (اکسل، ورد، PDF و غیره).
-- هر دو پوشه خروجی در `.gitignore` هستند و داده‌ها لوکال نگهداری می‌شوند.
+- `src/`: کد برنامه؛ `tests/`: آزمون‌ها؛ `tools/`: بررسی و بازیابی؛ `docs/`: مستندات؛ `packaging/`: تنظیمات ساخت EXE.
+- ریشه داده‌ها از `src/project_paths.py` گرفته می‌شود؛ محل سورس را با محل داده اشتباه نگیرید.
+- `Run_MSG_Extractor.bat`: ورودی MSG و مقصد دلخواه، بدون Embedding؛ `Run_NotebookLM_Bundler.bat`: ساخت بسته؛ `Run_Knowledge_Collector.bat`: جمع‌آوری اصل مدارک کنار گزارش Word.
+- `Run_Outlook_Extractor.bat` مسیر قبلی CLI روی MSG با OCR و RAG است؛ اتصال مستقیم Outlook در `src/app_gui.py` قرار دارد.
+- `Extracted_Data/<dataset>/` پیش‌فرض مجموعه‌هاست؛ مسیر خارجی نیز در برنامه‌های پنجره‌ای ممکن است. `final` نام مجموعه تاریخی است.
+- `emails/attachments/` اصل ضمائم، `attachments_text/` و `attachments_ocr_google/` متن استخراج‌شده‌اند. اصل MSG ورودی باید حفظ شود.
+- `bundle_manifest.json` مرجع شناسه‌های همان بسته NotebookLM است؛ `attachment_manifest.json` والدهای پیوست و گزارش اجرا مسیر ورودی را نگه می‌دارد.
+- خروجی دانش پوشه موضوع با Word و اصل PDF/Excel/Word/MSG است؛ ZIP و Markdown منبع تحویل داده نمی‌شوند.
+- خروجی‌های قدیمی `Extracted_Sample/` و `Extracted_Sample_text/` حفظ شده‌اند؛ داده‌های خصوصی و اطلاعات ورود وارد Git نشوند. `.gitignore` مسیرهای خارجی یا پوشه‌های خصوصی تازه را خودکار پوشش نمی‌دهد.
+- راهنمای جاری: `README.md` و `docs/INDEX_FA.md`. سند Word تعریف مسئله نسخه تاریخی ۰٫۱ است.
 
-## 4. وابستگی‌های پایتون
+## 4. وابستگی‌ها و اجرا
+
+در CMD از ریشه پروژه:
 
 ```bat
-pip install pywin32 openpyxl xlrd pdfminer.six python-docx python-pptx
+set PYTHONIOENCODING=utf-8
+py -3 -m pip install -r requirements.txt
 ```
 
-برای فاز بعدی (RAG - Step 4):
+MSG به `extract-msg` و RAR به `rarfile` و ابزار UnRAR نیاز دارد. `pywin32` برای مسیر مستقیم Outlook ویندوز است. OCR منتخب به OAuth گوگل و شبکه وابسته است؛ همه مراحل کاملاً آفلاین نیستند.
+
+RAG اختیاری:
+
 ```bat
-pip install chromadb sentence-transformers langchain
+set PYTHONIOENCODING=utf-8
+py -3 -m pip install chromadb sentence-transformers
 ```
+
+`langchain` وابستگی لازم کد RAG فعلی نیست. اجرای آزمون‌ها: `py -3 -m unittest discover -s tests`. اجرای ابزارهای نمونه یا OCR واقعی از آزمون واحد جدا باشد.
 
 ## 5. کنوانسیون‌های کدنویسی
 
